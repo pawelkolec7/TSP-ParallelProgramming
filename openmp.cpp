@@ -13,7 +13,6 @@
 
 const std::string FILENAME = "matrix.txt";
 
-// ----------- Struktura przedzia³u kosztów -----------
 struct CostRange {
     int min_cost;
     int max_cost;
@@ -27,7 +26,6 @@ struct Chromosome {
 using Matrix = std::vector<std::vector<CostRange>>;
 using Population = std::vector<Chromosome>;
 
-// ----------- Czytanie macierzy z pliku -----------
 Matrix readMatrixFromFile(const std::string& filename, int N) {
     Matrix matrix(N, std::vector<CostRange>(N));
     std::ifstream file(filename);
@@ -52,14 +50,12 @@ Matrix readMatrixFromFile(const std::string& filename, int N) {
     return matrix;
 }
 
-// ----------- Losowanie kosztu z przedzia³u -----------
 int random_cost(const CostRange& cr, std::mt19937& rng) {
     if (cr.min_cost == cr.max_cost) return cr.min_cost;
     std::uniform_int_distribution<int> dist(cr.min_cost, cr.max_cost);
     return dist(rng);
 }
 
-// ----------- Fitness (koszt trasy) -----------
 int compute_fitness(const Chromosome& c, const Matrix& m, std::mt19937& rng) {
     int sum = 0;
     int n = c.order.size();
@@ -71,7 +67,6 @@ int compute_fitness(const Chromosome& c, const Matrix& m, std::mt19937& rng) {
     return sum;
 }
 
-// ----------- Inicjalizacja populacji -----------
 void initialize_population(Population& pop, int pop_size, int n, std::mt19937& rng) {
     pop.resize(pop_size);
     for (int i = 0; i < pop_size; ++i) {
@@ -82,7 +77,6 @@ void initialize_population(Population& pop, int pop_size, int n, std::mt19937& r
     }
 }
 
-// ----------- Równoleg³a ocena populacji -----------
 void evaluate(Population& pop, const Matrix& matrix) {
     #pragma omp parallel
     {
@@ -94,7 +88,6 @@ void evaluate(Population& pop, const Matrix& matrix) {
     }
 }
 
-// ----------- Selekcja turniejowa -----------
 Chromosome tournament_selection(const Population& pop, std::mt19937& rng) {
     std::uniform_int_distribution<int> dist(0, pop.size() - 1);
     const Chromosome& a = pop[dist(rng)];
@@ -102,7 +95,6 @@ Chromosome tournament_selection(const Population& pop, std::mt19937& rng) {
     return (a.fitness < b.fitness) ? a : b;
 }
 
-// ----------- Crossover - Order Crossover (OX) -----------
 void crossover(const Chromosome& parent1, const Chromosome& parent2, Chromosome& child, std::mt19937& rng) {
     int n = parent1.order.size();
     std::uniform_int_distribution<int> dist(0, n - 1);
@@ -111,11 +103,9 @@ void crossover(const Chromosome& parent1, const Chromosome& parent2, Chromosome&
     if (start > end) std::swap(start, end);
 
     child.order.assign(n, -1);
-    // Skopiuj fragment z parent1
     for (int i = start; i <= end; ++i) {
         child.order[i] = parent1.order[i];
     }
-    // Uzupe³nij pozosta³e z parent2
     int current = 0;
     for (int i = 0; i < n; ++i) {
         int val = parent2.order[i];
@@ -126,7 +116,6 @@ void crossover(const Chromosome& parent1, const Chromosome& parent2, Chromosome&
     }
 }
 
-// ----------- Mutacja -----------
 void mutate(Chromosome& c, std::mt19937& rng) {
     std::uniform_real_distribution<double> rate_dist(0.0, 1.0);
     std::uniform_int_distribution<int> idx_dist(0, c.order.size() - 1);
@@ -138,14 +127,12 @@ void mutate(Chromosome& c, std::mt19937& rng) {
     }
 }
 
-// ----------- Sortowanie populacji po koszcie -----------
 void sort_population(Population& pop) {
     std::sort(pop.begin(), pop.end(), [](const Chromosome& a, const Chromosome& b) {
         return a.fitness < b.fitness;
     });
 }
 
-// ----------- G³ówna pêtla dla instancji N x N -----------
 void runTest(int N, const Matrix& fullMatrix) {
     std::mt19937 rng(std::random_device{}());
     int pop_size = 100;
@@ -163,12 +150,10 @@ void runTest(int N, const Matrix& fullMatrix) {
         evaluate(pop, matrix);
         sort_population(pop);
 
-        // Elitism - przenosimy najlepszych
         Population new_pop;
         for (int i = 0; i < ELITISM; ++i)
             new_pop.push_back(pop[i]);
 
-        // --- Równoleg³e generowanie nowej populacji ---
         #pragma omp parallel
         {
             std::mt19937 thread_rng((unsigned int)(std::random_device{}() + omp_get_thread_num()*10000));
@@ -196,7 +181,6 @@ void runTest(int N, const Matrix& fullMatrix) {
     std::cout << "N=" << N << "  Best cost: " << pop[0].fitness << "   Time: " << ms << "s" << std::endl;
 }
 
-// ----------- MAIN -----------
 int main(int argc, char* argv[]) {
     auto fullMatrix = readMatrixFromFile(FILENAME, 5000);
 
