@@ -19,7 +19,7 @@ struct CostRange {
 };
 
 struct Chromosome {
-    int* order; // na GPU
+    int* order; 
     int fitness;
 };
 
@@ -28,7 +28,6 @@ int mod(int x, int N) {
     return x % N;
 }
 
-// ---------------- CUDA error checking ----------------
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true) {
    if (code != cudaSuccess) {
@@ -37,7 +36,6 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
    }
 }
 
-// ---------------- Czytanie macierzy z pliku (CPU) ---------------
 std::vector<std::vector<CostRange>> readMatrixFromFile(const std::string& filename, int N) {
     std::vector<std::vector<CostRange>> matrix(N, std::vector<CostRange>(N));
     std::ifstream file(filename);
@@ -62,21 +60,19 @@ std::vector<std::vector<CostRange>> readMatrixFromFile(const std::string& filena
     return matrix;
 }
 
-// ---------- Funkcja do kopiowania macierzy na GPU (flatten) -----------
 void flattenMatrix(const std::vector<std::vector<CostRange>>& matrix, CostRange* d_matrix, int N) {
     for (int i = 0; i < N; ++i)
         for (int j = 0; j < N; ++j)
             d_matrix[i*N + j] = matrix[i][j];
 }
 
-// ---------- CUDA: inicjalizacja RNG dla ka¿dego w¹tku -----------
+
 __global__ void setup_kernel(curandState *state, unsigned long seed, int n) {
     int id = blockIdx.x * blockDim.x + threadIdx.x;
     if (id < n)
         curand_init(seed, id, 0, &state[id]);
 }
 
-// ---------- CUDA: losowy koszt z przedzia³u -----------------
 __device__ int random_cost(const CostRange& cr, curandState* state, int tid) {
     if (cr.min_cost == cr.max_cost) return cr.min_cost;
     int diff = cr.max_cost - cr.min_cost + 1;
@@ -84,7 +80,6 @@ __device__ int random_cost(const CostRange& cr, curandState* state, int tid) {
     return cr.min_cost + r;
 }
 
-// ---------- CUDA: fitness dla jednego osobnika -----------------
 __device__ int compute_fitness_gpu(int* order, const CostRange* matrix, int N, curandState* state, int tid) {
     int sum = 0;
     for (int i = 0; i < N; ++i) {
@@ -96,7 +91,6 @@ __device__ int compute_fitness_gpu(int* order, const CostRange* matrix, int N, c
     return sum;
 }
 
-// ---------- CUDA: ocena ca³ej populacji -----------------
 __global__ void evaluate_population_kernel(
     int* d_orders, int* d_fitness,
     const CostRange* d_matrix, int N, int pop_size, curandState* state)
@@ -109,7 +103,6 @@ __global__ void evaluate_population_kernel(
     }
 }
 
-// --------- CUDA: mutacja (SWAP) dla populacji ----------
 __global__ void mutate_kernel(int* d_orders, int N, int pop_size, float mutation_rate, curandState* state) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < pop_size) {
@@ -126,7 +119,6 @@ __global__ void mutate_kernel(int* d_orders, int N, int pop_size, float mutation
     }
 }
 
-// --------- CUDA: prosty OX crossover, turniejowa selekcja na CPU ----------
 
 void tournament_selection(const int* orders, const int* fitness, int pop_size, int N, std::mt19937& rng, int* selected) {
     std::uniform_int_distribution<int> dist(0, pop_size-1);
@@ -163,7 +155,6 @@ void ox_crossover(const int* parent1, const int* parent2, int* child, int N, std
     }
 }
 
-// ----------- Inicjalizacja populacji na CPU ----------
 void initialize_population(int* orders, int pop_size, int N, std::mt19937& rng) {
     std::vector<int> tmp(N);
     for (int i = 0; i < N; ++i) tmp[i]=i;
@@ -174,7 +165,6 @@ void initialize_population(int* orders, int pop_size, int N, std::mt19937& rng) 
     }
 }
 
-// ----------- sortowanie + elitaryzm (CPU) ----------
 void elitism(const int* orders, const int* fitness, int* elite_orders, int& elite_fitness, int pop_size, int N) {
     int best = 0;
     for (int i=1;i<pop_size;++i)
@@ -185,57 +175,44 @@ void elitism(const int* orders, const int* fitness, int* elite_orders, int& elit
     elite_fitness = fitness[best];
 }
 
-// ----------- MAIN CUDA ALGORITHM (dla jednego N) ----------
 void runTest(int N, const std::vector<std::vector<CostRange>>& matrixCPU) {
     int pop_size = 100;
 
-    // ---- Macierz kosztów (GPU Unified Memory) ----
     CostRange* d_matrix;
     gpuErrchk(cudaMallocManaged(&d_matrix, N*N*sizeof(CostRange)));
     flattenMatrix(matrixCPU, d_matrix, N);
 
-    // ---- Populacja (GPU Unified Memory) ----
     int* d_orders;
     int* d_fitness;
     gpuErrchk(cudaMallocManaged(&d_orders, pop_size*N*sizeof(int)));
     gpuErrchk(cudaMallocManaged(&d_fitness, pop_size*sizeof(int)));
 
-    // ---- RNG (CUDA) ----
     curandState* d_state;
     gpuErrchk(cudaMalloc(&d_state, pop_size*sizeof(curandState)));
 
-    // ---- Inicjalizacja CPU RNG ----
     std::random_device rd;
     std::mt19937 rng(rd());
 
-    // ---- Inicjalizacja populacji (CPU) ----
     initialize_population(d_orders, pop_size, N, rng);
 
-    // ---- Inicjalizacja RNG na GPU ----
     setup_kernel<<<(pop_size+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(d_state, time(0), pop_size);
     cudaDeviceSynchronize();
 
-    // ---- Ewolucja ----
     auto start = std::chrono::high_resolution_clock::now();
     for (int gen=0; gen<MAX_GENERATIONS; ++gen) {
-        // --- Fitness dla wszystkich ---
         evaluate_population_kernel<<<(pop_size+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(
             d_orders, d_fitness, d_matrix, N, pop_size, d_state);
         cudaDeviceSynchronize();
 
-        // --- Elitaryzm (CPU) ---
         std::vector<int> elite_order(N);
         int elite_fitness;
         elitism(d_orders, d_fitness, elite_order.data(), elite_fitness, pop_size, N);
 
-        // --- Nowa populacja na CPU ---
         std::vector<int> new_orders(pop_size*N);
 
-        // -- Elita --
         for (int j=0;j<N;++j)
             new_orders[j]=elite_order[j];
 
-        // --- Reszta: selekcja, crossover, mutacja (CPU, potem mutacja GPU) ---
         for (int i=ELITISM;i<pop_size;++i) {
             std::vector<int> parent1(N), parent2(N), child(N);
 
@@ -247,20 +224,16 @@ void runTest(int N, const std::vector<std::vector<CostRange>>& matrixCPU) {
                 new_orders[i*N+j]=child[j];
         }
 
-        // ---- Skopiuj now¹ populacjê do d_orders (Unified Memory) ---
         std::copy(new_orders.begin(), new_orders.end(), d_orders);
 
-        // ---- Mutacja (na GPU, szybciej!) ---
         mutate_kernel<<<(pop_size+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(
             d_orders, N, pop_size, MUTATION_RATE, d_state);
         cudaDeviceSynchronize();
     }
-    // --- Finalna ewaluacja ---
     evaluate_population_kernel<<<(pop_size+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(
             d_orders, d_fitness, d_matrix, N, pop_size, d_state);
     cudaDeviceSynchronize();
 
-    // --- ZnajdŸ najlepsze rozwi¹zanie ---
     int best_idx = 0;
     for (int i=1;i<pop_size;++i)
         if (d_fitness[i]<d_fitness[best_idx]) best_idx=i;
@@ -270,14 +243,12 @@ void runTest(int N, const std::vector<std::vector<CostRange>>& matrixCPU) {
 
     std::cout << "N=" << N << "  Best cost: " << d_fitness[best_idx] << "   Time: " << ms << "s" << std::endl;
 
-    // --- Zwolnij pamiêæ ---
     cudaFree(d_matrix);
     cudaFree(d_orders);
     cudaFree(d_fitness);
     cudaFree(d_state);
 }
 
-// ----------- MAIN -----------
 int main(int argc, char* argv[]) {
     const int MAX_N = 5000;
     auto matrix = readMatrixFromFile("matrix.txt", MAX_N);
